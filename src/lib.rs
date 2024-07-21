@@ -9,12 +9,7 @@
 #![doc(html_logo_url = "https://knurling.ferrous-systems.com/knurling_logo_light_text.svg")]
 #![no_std]
 
-use defmt::Format;
 pub use defmt_test_macros::tests;
-
-/// Private implementation details used by the proc macro.
-#[doc(hidden)]
-pub mod export;
 
 mod sealed {
     pub trait Sealed {}
@@ -27,7 +22,8 @@ mod sealed {
 /// This is comparable to the `Termination` trait in libstd, except stable and tailored towards the
 /// needs of defmt-test. It is implemented for `()`, which always indicates success, and `Result`,
 /// where `Ok` indicates success.
-pub trait TestOutcome: Format + sealed::Sealed {
+// pub trait TestOutcome: Format + sealed::Sealed {
+pub trait TestOutcome: sealed::Sealed {
     fn is_success(&self) -> bool;
 }
 
@@ -37,7 +33,8 @@ impl TestOutcome for () {
     }
 }
 
-impl<T: Format, E: Format> TestOutcome for Result<T, E> {
+// impl<T: Format, E: Format> TestOutcome for Result<T, E> {
+impl<T, E> TestOutcome for Result<T, E> {
     fn is_success(&self) -> bool {
         self.is_ok()
     }

@@ -3,9 +3,17 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{quote, quote_spanned};
 use syn::{parse, spanned::Spanned, Attribute, Item, ItemFn, ItemMod, ReturnType, Type};
+use darling::FromMeta;
+use darling::ast::NestedMeta;
+
+#[derive(Debug, FromMeta)]
+struct MacroArgs {
+    avr_println: syn::Path,
+    avr_exit: syn::Path,
+}
+
 
 #[proc_macro_attribute]
 pub fn tests(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -16,12 +24,11 @@ pub fn tests(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStream> {
-    if !args.is_empty() {
-        return Err(parse::Error::new(
-            Span::call_site(),
-            "`#[test]` attribute takes no arguments",
-        ));
-    }
+    let attr_args = NestedMeta::parse_meta_list(args.into())?;
+    let args = MacroArgs::from_list(&attr_args)?;
+
+    let avr_println = args.avr_println;
+    let avr_exit = args.avr_exit;
 
     let module: ItemMod = syn::parse(input)?;
 
@@ -32,6 +39,21 @@ fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStrea
             module.span(),
             "module must be inline (e.g. `mod foo {}`)",
         ));
+    };
+
+    let utility_fn = quote! {
+        use avr_defmt_test::TestOutcome;
+        
+        pub fn check_outcome<T: TestOutcome>(outcome: T, should_error: bool) {
+            if outcome.is_success() == should_error {
+                if should_error {
+                    #avr_println!("`#[should_error]` ");
+                }
+                #avr_println!("FAILED");
+                #avr_exit();
+            }
+            #avr_println!("OK");
+        }
     };
 
     let mut init = None;
@@ -259,7 +281,6 @@ fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStrea
         }
     }
 
-    let krate = format_ident!("defmt_test");
     let ident = module.ident;
     let mut state_ty = None;
     let (init_fn, init_expr) = if let Some(init) = init {
@@ -374,7 +395,7 @@ fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStrea
         } else {
             unit_test_calls.push(quote!(
                 #before_each_call;
-                #krate::export::check_outcome(#call, #should_error);
+                check_outcome(#call, #should_error);
                 #after_each_call;
             ));
         }
@@ -403,12 +424,14 @@ fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStrea
         .iter()
         .map(|test| {
             let message = format!(
-                "({{=usize}}/{{=usize}}) {} `{}`...",
+                "{} `{}`...",
                 if test.ignore { "ignoring" } else { "running" },
                 test.func.sig.ident
             );
             quote_spanned! {
-                test.func.sig.ident.span() => defmt::println!(#message, __defmt_test_number, DEFMT_TEST_COUNT);
+                test.func.sig.ident.span() => {
+                    #avr_println!(#message);
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -432,9 +455,11 @@ fn tests_impl(args: TokenStream, input: TokenStream) -> parse::Result<TokenStrea
                 }
             )*
 
-            defmt::println!("all tests passed!");
-            #krate::export::exit()
+            #avr_println!("all tests passed!");
+            #avr_exit()
         }
+
+        #utility_fn
 
         #init_fn
 
